@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 
-st.title("Power Hour Schedule")
+st.title("🩸 Power Hour Schedule")
 st.write("Identifies the absolute busiest single-hour blocks for management support.")
 
 # --- SIDEBAR SETTINGS ---
@@ -14,11 +14,11 @@ with st.sidebar:
     
     # 1. The "Limit" Rule
     max_slots = st.number_input(
-        "How many Power Hours per day?", 
+        "Standard Power Hours per day", 
         value=2, 
         min_value=1, 
         max_value=5,
-        help="The tool will identify exactly this many separate 1-hour blocks."
+        help="This is the rule for Mon-Fri. Saturdays are automatically limited to 1."
     )
     
     st.divider()
@@ -95,14 +95,21 @@ if uploaded_file:
             for day in days_order:
                 day_data = hourly_df[hourly_df["Day"] == day].copy()
                 
-                # Check for "Closed" days (Total donors = 0)
+                # Check for "Closed" days
                 total_donors_for_day = day_data['Adjusted Count'].sum()
                 
                 if total_donors_for_day == 0:
                      schedule_rows.append({"Day": day, "Power Hours": "Closed"})
                 elif not day_data.empty:
+                    
+                    # --- THE SATURDAY RULE ---
+                    if day == "Saturday":
+                        current_limit = 1
+                    else:
+                        current_limit = max_slots
+                    
                     # 1. Grab the Top N busiest hours
-                    top_hours = day_data.nlargest(max_slots, 'Adjusted Count').copy()
+                    top_hours = day_data.nlargest(current_limit, 'Adjusted Count').copy()
                     
                     # 2. Sort them by TIME
                     top_hours = top_hours.sort_values(by="HourObj")
@@ -114,12 +121,11 @@ if uploaded_file:
                         t_end = t_start + timedelta(hours=1)
                         peak = int(round(row['Adjusted Count']))
                         
-                        # Only show if there are actually people (ignore 0 donor hours)
                         if peak > 0:
                             time_strings.append(f"{t_start.strftime('%H:%M')} - {t_end.strftime('%H:%M')} (Peak: {peak})")
                     
                     if not time_strings:
-                        final_time_str = "Closed" # Fallback if data existed but all were 0
+                        final_time_str = "Closed"
                     else:
                         final_time_str = "  |  ".join(time_strings)
                         
@@ -134,8 +140,6 @@ if uploaded_file:
             st.subheader("Copy for Email")
             text_output = "Power Hour Schedule:\n"
             for row in schedule_rows:
-                # Don't include "Closed" days in the email copy to keep it short? 
-                # Or include them? Let's include them for clarity.
                 text_output += f"{row['Day']}: {row['Power Hours']}\n"
             st.text_area("Select All & Copy", value=text_output, height=200)
 
