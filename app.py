@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 
 st.title("🩸 Power Hour Schedule")
-st.write("Identifies the absolute busiest hours of the day for management support.")
+st.write("Identifies the absolute busiest single-hour blocks for management support.")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -14,11 +14,11 @@ with st.sidebar:
     
     # 1. The "Limit" Rule
     max_slots = st.number_input(
-        "Max Power Hours per Day", 
+        "How many Power Hours per day?", 
         value=2, 
         min_value=1, 
         max_value=5,
-        help="The tool will strictly limit the output to this many hours per day (e.g., the top 2 busiest hours)."
+        help="The tool will identify exactly this many separate 1-hour blocks (e.g., the Top 2 busiest hours)."
     )
     
     st.divider()
@@ -26,7 +26,8 @@ with st.sidebar:
     report_type = st.radio(
         "Report Duration",
         ["Single Week Data", "4-Week Rollup"],
-        index=1
+        index=1,
+        help="Select 4-Week Rollup if the file contains a month of data summed up."
     )
 
 # --- FILE PROCESSING ---
@@ -41,6 +42,7 @@ if uploaded_file:
              raw_df = pd.read_excel(uploaded_file, header=None)
 
         # 1. FIND THE DATA GRID
+        # We search for the specific header row that starts the report
         start_row_index = -1
         end_row_index = -1
         
@@ -51,6 +53,7 @@ if uploaded_file:
                 break
         
         if start_row_index != -1:
+            # Look for the end of the table
             for i in range(start_row_index + 1, len(raw_df)):
                 val = str(raw_df.iloc[i, 0])
                 if "Totals" in val or "Units" in val:
@@ -59,6 +62,7 @@ if uploaded_file:
             
             if end_row_index == -1: end_row_index = start_row_index + 30 
             
+            # Slice the dataframe to just the grid
             data_df = raw_df.iloc[start_row_index:end_row_index]
             data_df.columns = data_df.iloc[0]
             data_df = data_df[1:]
@@ -73,19 +77,20 @@ if uploaded_file:
                 except: return None
                 
             melted['TimeObj'] = melted['Time'].apply(parse_time)
+            # Floor times to the hour (e.g. 7:30 -> 7:00)
             melted['HourObj'] = melted['TimeObj'].dt.floor('h') 
             
-            # Group by Day and Hour
+            # Sum up donors per hour
             hourly_df = melted.groupby(['Day', 'HourObj'])['Count'].sum().reset_index()
             hourly_df['Time'] = hourly_df['HourObj'].dt.strftime('%H:%M')
             
-            # Apply 4-Week Math
+            # Apply 4-Week Math if needed
             if report_type == "4-Week Rollup":
                 hourly_df["Adjusted Count"] = hourly_df["Count"] / 4
             else:
                 hourly_df["Adjusted Count"] = hourly_df["Count"]
 
-            # --- DISPLAY WITH "TOP N" LOGIC ---
+            # --- DISPLAY TOP N SEPARATE HOURS ---
             st.divider()
             
             days_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -95,57 +100,38 @@ if uploaded_file:
                 day_data = hourly_df[hourly_df["Day"] == day].copy()
                 
                 if not day_data.empty:
-                    # KEY CHANGE: Just grab the top N busiest hours
-                    # We sort by Count (Largest first) and take the top 'max_slots'
+                    # 1. Grab the Top N busiest hours strictly by count
                     top_hours = day_data.nlargest(max_slots, 'Adjusted Count').copy()
                     
-                    # Now sort those selected hours by TIME so they appear in order (Morning -> Night)
+                    # 2. Sort them by TIME for the display (so Morning shift shows before Evening shift)
                     top_hours = top_hours.sort_values(by="HourObj")
                     
-                    # Logic to check if they are back-to-back (Merging blocks)
-                    ranges = []
-                    if len(top_hours) > 0:
-                        start_time = top_hours.iloc[0]['HourObj']
-                        end_time = start_time
-                        max_donors = top_hours.iloc[0]['Adjusted Count']
-                        
-                        for i in range(1, len(top_hours)):
-                            current_time = top_hours.iloc[i]['HourObj']
-                            current_donors = top_hours.iloc[i]['Adjusted Count']
-                            
-                            # Check if contiguous (1 hour diff)
-                            if current_time == end_time + timedelta(hours=1):
-                                end_time = current_time 
-                                if current_donors > max_donors: max_donors = current_donors
-                            else:
-                                ranges.append((start_time, end_time, max_donors))
-                                start_time = current_time
-                                end_time = current_time
-                                max_donors = current_donors
-                        ranges.append((start_time, end_time, max_donors))
-                    
-                    # Format String
+                    # 3. Format them individually (Strictly 1 hour each)
                     time_strings = []
-                    for r in ranges:
-                        t_start = r[0]
-                        t_end = r[1] + timedelta(hours=1) # End of the block
-                        peak = int(round(r[2]))
+                    for _, row in top_hours.iterrows():
+                        t_start = row['HourObj']
+                        t_end = t_start + timedelta(hours=1)
+                        peak = int(round(row['Adjusted Count']))
+                        
+                        # Output format: "07:00-08:00 (Peak: 45)"
                         time_strings.append(f"{t_start.strftime('%H:%M')} - {t_end.strftime('%H:%M')} (Peak: {peak})")
                     
-                    final_time_str = "  &  ".join(time_strings)
-                    schedule_rows.append({"Day": day, "Top Priority Shifts": final_time_str})
+                    # Join them with a separator
+                    final_time_str = "  |  ".join(time_strings)
+                    schedule_rows.append({"Day": day, "Power Hours": final_time_str})
                 else:
-                    schedule_rows.append({"Day": day, "Top Priority Shifts": "-"})
+                    schedule_rows.append({"Day": day, "Power Hours": "-"})
 
+            # Create the table
             df_schedule = pd.DataFrame(schedule_rows)
             st.table(df_schedule.set_index("Day"))
             
-            # Copy Text
+            # Create Copy-Paste Text
             st.subheader("Copy for Email")
-            text_output = "Power Hour Schedule (Top Priority):\n"
+            text_output = "Power Hour Schedule:\n"
             for row in schedule_rows:
-                if row['Top Priority Shifts'] != "-":
-                    text_output += f"{row['Day']}: {row['Top Priority Shifts']}\n"
+                if row['Power Hours'] != "-":
+                    text_output += f"{row['Day']}: {row['Power Hours']}\n"
             st.text_area("Select All & Copy", value=text_output, height=200)
 
         else:
