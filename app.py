@@ -36,12 +36,6 @@ with st.sidebar:
         help="Select '4-Week Rollup' if your Jasper report covers a full month. The tool will divide by 4 to get the weekly average."
     )
     
-    st.info(
-        "**Schedule Policy:**\n"
-        "- **Mon-Fri:** 1 AM Slot & 1 PM Slot\n"
-        "- **Sat:** 1 Slot Total\n"
-        "- **Sun:** Closed"
-    )
 
 # --- FILE PROCESSING ---
 uploaded_file = st.file_uploader("Upload Excel File", type=["xls", "xlsx", "csv"])
