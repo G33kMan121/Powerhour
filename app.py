@@ -6,19 +6,17 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 
 st.title("Power Hour Schedule")
-st.write("Identifies the absolute busiest single-hour blocks for management support.")
+st.write("Calculates the single busiest hour for the AM shift and PM shift.")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
     st.header("Settings")
     
-    # 1. The "Limit" Rule
-    max_slots = st.number_input(
-        "Standard Power Hours per day", 
-        value=2, 
-        min_value=1, 
-        max_value=5,
-        help="This is the rule for Mon-Fri. Saturdays are automatically limited to 1."
+    st.info(
+        "**Schedule Policy:**\n"
+        "- **Mon-Fri:** 1 AM Slot & 1 PM Slot\n"
+        "- **Sat:** 1 Slot Total\n"
+        "- **Sun:** Closed"
     )
     
     st.divider()
@@ -86,7 +84,7 @@ if uploaded_file:
             else:
                 hourly_df["Adjusted Count"] = hourly_df["Count"]
 
-            # --- DISPLAY TOP N SEPARATE HOURS ---
+            # --- DISPLAY WITH AM/PM SPLIT LOGIC ---
             st.divider()
             
             days_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
@@ -102,19 +100,35 @@ if uploaded_file:
                      schedule_rows.append({"Day": day, "Power Hours": "Closed"})
                 elif not day_data.empty:
                     
-                    # --- THE SATURDAY RULE ---
+                    top_hours = pd.DataFrame()
+
+                    # --- SATURDAY RULE ---
                     if day == "Saturday":
-                        current_limit = 1
+                        # Just take the single absolute busiest hour of the day
+                        top_hours = day_data.nlargest(1, 'Adjusted Count')
+                        
+                    # --- MON-FRI RULE (AM/PM SPLIT) ---
                     else:
-                        current_limit = max_slots
-                    
-                    # 1. Grab the Top N busiest hours
-                    top_hours = day_data.nlargest(current_limit, 'Adjusted Count').copy()
-                    
-                    # 2. Sort them by TIME
+                        # Split data into Morning (< 12:00) and Evening (>= 12:00)
+                        morning_data = day_data[day_data['HourObj'].dt.hour < 12]
+                        evening_data = day_data[day_data['HourObj'].dt.hour >= 12]
+                        
+                        # Find the #1 slot for Morning
+                        if not morning_data.empty:
+                            best_am = morning_data.nlargest(1, 'Adjusted Count')
+                            top_hours = pd.concat([top_hours, best_am])
+                            
+                        # Find the #1 slot for Evening
+                        if not evening_data.empty:
+                            best_pm = evening_data.nlargest(1, 'Adjusted Count')
+                            top_hours = pd.concat([top_hours, best_pm])
+
+                    # ----------------------------------
+
+                    # Sort by TIME so AM shows before PM
                     top_hours = top_hours.sort_values(by="HourObj")
                     
-                    # 3. Format them
+                    # Format strings
                     time_strings = []
                     for _, row in top_hours.iterrows():
                         t_start = row['HourObj']
