@@ -3,8 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered") 
-# Switched layout to 'centered' to make it look more like a document
+st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 
 st.title("🩸 Power Hour Schedule")
 
@@ -12,17 +11,36 @@ st.title("🩸 Power Hour Schedule")
 with st.sidebar:
     st.header("Settings")
     
+    # 1. Choose Strategy
+    analysis_mode = st.radio(
+        "How should we find peaks?",
+        ["Smart Auto-Detect (Recommended)", "Manual Fixed Number"],
+        index=0,
+        help="Smart Auto-Detect finds the busiest times relative to THIS center's volume. Manual lets you pick a specific number."
+    )
+    
+    # 2. Dynamic Settings based on Strategy
+    if analysis_mode == "Manual Fixed Number":
+        trigger_count = st.number_input(
+            "Trigger Point (Donors per 30 mins)", 
+            value=10, min_value=1
+        )
+    else:
+        # Percentile Slider
+        percentile_cutoff = st.slider(
+            "Peak Sensitivity", 
+            min_value=70, max_value=99, value=85,
+            help="85 means: 'Only show me the top 15% busiest times of the week.'"
+        )
+        trigger_count = 0 # Placeholder, calculated later
+
+    st.divider()
+    
     report_type = st.radio(
         "Report Duration",
         ["Single Week Data", "4-Week Rollup"],
         index=1,
         help="Select '4-Week Rollup' to automatically divide the numbers by 4."
-    )
-    
-    trigger_count = st.number_input(
-        "Trigger Point (Donors per 30 mins)", 
-        value=10, 
-        min_value=1
     )
 
 # --- FILE PROCESSING ---
@@ -68,31 +86,37 @@ if uploaded_file:
             else:
                 melted["Adjusted Count"] = melted["Count"]
 
+            # --- SMART CALCULATION ---
+            # If Auto-Detect is on, we calculate the trigger dynamically
+            if analysis_mode == "Smart Auto-Detect (Recommended)":
+                # Calculate the percentile (e.g., the value that is higher than 85% of the rest)
+                calculated_threshold = melted["Adjusted Count"].quantile(percentile_cutoff / 100.0)
+                # Ensure it's at least 1 person
+                trigger_count = max(1, calculated_threshold)
+                
+                st.info(f"📊 **Smart Analysis:** Based on this center's volume, we defined 'Power Hour' as anything above **{round(trigger_count, 1)}** donors.")
+            
+            # Filter
             power_hours = melted[melted["Adjusted Count"] >= trigger_count].copy()
             
-            # --- NEW DISPLAY LOGIC: CONDENSED TABLE ---
+            # --- DISPLAY ---
             st.divider()
             
             if not power_hours.empty:
-                # Helper for time parsing
                 def parse_time(t_str):
                     try: return datetime.strptime(str(t_str).strip(), "%H:%M")
                     except: return None
 
                 days_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-                
-                # We will build a list of dictionaries to feed into a clean Table
                 schedule_rows = []
 
                 for day in days_order:
                     day_data = power_hours[power_hours["Day"] == day].copy()
                     
                     if not day_data.empty:
-                        # Convert to time objects for math
                         day_data['TimeObj'] = day_data['Time'].apply(parse_time)
                         day_data = day_data.sort_values(by="TimeObj")
                         
-                        # Logic to group consecutive blocks
                         ranges = []
                         if len(day_data) > 0:
                             start_time = day_data.iloc[0]['TimeObj']
@@ -104,7 +128,7 @@ if uploaded_file:
                                 current_donors = day_data.iloc[i]['Adjusted Count']
                                 
                                 if current_time == end_time + timedelta(minutes=30):
-                                    end_time = current_time # Extend block
+                                    end_time = current_time 
                                     if current_donors > max_donors: max_donors = current_donors
                                 else:
                                     ranges.append((start_time, end_time, max_donors))
@@ -113,8 +137,6 @@ if uploaded_file:
                                     max_donors = current_donors
                             ranges.append((start_time, end_time, max_donors))
                         
-                        # Format the ranges for this day into a single string
-                        # e.g. "07:00 - 11:00" OR "07:00 - 09:00 & 14:00 - 16:00"
                         time_strings = []
                         for r in ranges:
                             t_start = r[0]
@@ -124,33 +146,23 @@ if uploaded_file:
                         
                         final_time_str = "  &  ".join(time_strings)
                         
-                        schedule_rows.append({
-                            "Day": day,
-                            "Power Hour Shift": final_time_str
-                        })
+                        schedule_rows.append({"Day": day, "Power Hour Shift": final_time_str})
                     else:
-                        # Keep the day in the list but mark it empty
-                        schedule_rows.append({
-                            "Day": day,
-                            "Power Hour Shift": "No Coverage Needed"
-                        })
+                        schedule_rows.append({"Day": day, "Power Hour Shift": "No Coverage Needed"})
 
-                # Create the nice table
                 df_schedule = pd.DataFrame(schedule_rows)
-                
-                # Display as a clean static table
                 st.table(df_schedule.set_index("Day"))
                 
-                # Copy Text Generator
+                # Text Box
                 st.subheader("Copy for Email")
                 text_output = "Power Hour Schedule:\n"
                 for row in schedule_rows:
-                    text_output += f"{row['Day']}: {row['Power Hour Shift']}\n"
-                
+                    if "No Coverage" not in row['Power Hour Shift']:
+                        text_output += f"{row['Day']}: {row['Power Hour Shift']}\n"
                 st.text_area("Select All & Copy", value=text_output, height=200)
 
             else:
-                st.success(f"No times found with {trigger_count} or more donors.")
+                st.warning(f"No times found! (Try lowering the sensitivity slider in the sidebar)")
 
         else:
             st.error("Could not find the 'Time/Sunday' table.")
