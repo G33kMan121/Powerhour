@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 
-st.title("🩸 Power Hour Schedule")
+st.title("Power Hour Schedule")
 st.write("Identifies the absolute busiest single-hour blocks for management support.")
 
 # --- SIDEBAR SETTINGS ---
