@@ -8,24 +8,39 @@ st.set_page_config(page_title="Donor Arrival Analyzer", layout="centered")
 st.title("Power Hour Schedule")
 st.write("Calculates the single busiest hour for the AM shift and PM shift.")
 
-# --- SIDEBAR SETTINGS ---
+# --- SIDEBAR INSTRUCTIONS ---
 with st.sidebar:
-    st.header("Settings")
+    st.header("Instructions")
+    
+    st.markdown("""
+    **Step 1:** Log into **Jasper**.
+    
+    **Step 2:** Run the **"Arrival Pattern for Scheduling"** report.
+    * *Option A:* Run for a specific week.
+    * *Option B:* Run for the past 4 weeks (Recommended).
+    
+    **Step 3:** Download/Export as an **Excel** file.
+    
+    **Step 4:** Upload that file here.
+    """)
+    
+    st.divider()
+    
+    st.header("Configuration")
+    
+    # We still need this button so the math works!
+    report_type = st.radio(
+        "Which report did you run?",
+        ["Single Week Data", "4-Week Rollup"],
+        index=1,
+        help="Select '4-Week Rollup' if your Jasper report covers a full month. The tool will divide by 4 to get the weekly average."
+    )
     
     st.info(
         "**Schedule Policy:**\n"
         "- **Mon-Fri:** 1 AM Slot & 1 PM Slot\n"
         "- **Sat:** 1 Slot Total\n"
         "- **Sun:** Closed"
-    )
-    
-    st.divider()
-    
-    report_type = st.radio(
-        "Report Duration",
-        ["Single Week Data", "4-Week Rollup"],
-        index=1,
-        help="Select 4-Week Rollup if the file contains a month of data summed up."
     )
 
 # --- FILE PROCESSING ---
@@ -76,7 +91,7 @@ if uploaded_file:
             
             # Sum up donors per hour
             hourly_df = melted.groupby(['Day', 'HourObj'])['Count'].sum().reset_index()
-            hourly_df['Time'] = hourly_df['HourObj'].dt.strftime('%H:%M')
+            # Note: We keep the internal time tracking as objects for sorting
             
             # Apply 4-Week Math
             if report_type == "4-Week Rollup":
@@ -128,7 +143,7 @@ if uploaded_file:
                     # Sort by TIME so AM shows before PM
                     top_hours = top_hours.sort_values(by="HourObj")
                     
-                    # Format strings
+                    # Format strings with AM/PM conversion
                     time_strings = []
                     for _, row in top_hours.iterrows():
                         t_start = row['HourObj']
@@ -136,7 +151,12 @@ if uploaded_file:
                         peak = int(round(row['Adjusted Count']))
                         
                         if peak > 0:
-                            time_strings.append(f"{t_start.strftime('%H:%M')} - {t_end.strftime('%H:%M')} (Peak: {peak})")
+                            # %I is 12-hour format, %p is AM/PM
+                            # lstrip("0") removes the leading zero (e.g. 02:00 -> 2:00)
+                            start_str = t_start.strftime('%I:%M %p').lstrip("0").replace(" 0", " ")
+                            end_str = t_end.strftime('%I:%M %p').lstrip("0").replace(" 0", " ")
+                            
+                            time_strings.append(f"{start_str} - {end_str} (Peak: {peak})")
                     
                     if not time_strings:
                         final_time_str = "Closed"
