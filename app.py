@@ -18,7 +18,7 @@ with st.sidebar:
         value=2, 
         min_value=1, 
         max_value=5,
-        help="The tool will identify exactly this many separate 1-hour blocks (e.g., the Top 2 busiest hours)."
+        help="The tool will identify exactly this many separate 1-hour blocks."
     )
     
     st.divider()
@@ -42,7 +42,6 @@ if uploaded_file:
              raw_df = pd.read_excel(uploaded_file, header=None)
 
         # 1. FIND THE DATA GRID
-        # We search for the specific header row that starts the report
         start_row_index = -1
         end_row_index = -1
         
@@ -53,7 +52,6 @@ if uploaded_file:
                 break
         
         if start_row_index != -1:
-            # Look for the end of the table
             for i in range(start_row_index + 1, len(raw_df)):
                 val = str(raw_df.iloc[i, 0])
                 if "Totals" in val or "Units" in val:
@@ -62,7 +60,6 @@ if uploaded_file:
             
             if end_row_index == -1: end_row_index = start_row_index + 30 
             
-            # Slice the dataframe to just the grid
             data_df = raw_df.iloc[start_row_index:end_row_index]
             data_df.columns = data_df.iloc[0]
             data_df = data_df[1:]
@@ -77,14 +74,13 @@ if uploaded_file:
                 except: return None
                 
             melted['TimeObj'] = melted['Time'].apply(parse_time)
-            # Floor times to the hour (e.g. 7:30 -> 7:00)
             melted['HourObj'] = melted['TimeObj'].dt.floor('h') 
             
             # Sum up donors per hour
             hourly_df = melted.groupby(['Day', 'HourObj'])['Count'].sum().reset_index()
             hourly_df['Time'] = hourly_df['HourObj'].dt.strftime('%H:%M')
             
-            # Apply 4-Week Math if needed
+            # Apply 4-Week Math
             if report_type == "4-Week Rollup":
                 hourly_df["Adjusted Count"] = hourly_df["Count"] / 4
             else:
@@ -99,39 +95,48 @@ if uploaded_file:
             for day in days_order:
                 day_data = hourly_df[hourly_df["Day"] == day].copy()
                 
-                if not day_data.empty:
-                    # 1. Grab the Top N busiest hours strictly by count
+                # Check for "Closed" days (Total donors = 0)
+                total_donors_for_day = day_data['Adjusted Count'].sum()
+                
+                if total_donors_for_day == 0:
+                     schedule_rows.append({"Day": day, "Power Hours": "Closed"})
+                elif not day_data.empty:
+                    # 1. Grab the Top N busiest hours
                     top_hours = day_data.nlargest(max_slots, 'Adjusted Count').copy()
                     
-                    # 2. Sort them by TIME for the display (so Morning shift shows before Evening shift)
+                    # 2. Sort them by TIME
                     top_hours = top_hours.sort_values(by="HourObj")
                     
-                    # 3. Format them individually (Strictly 1 hour each)
+                    # 3. Format them
                     time_strings = []
                     for _, row in top_hours.iterrows():
                         t_start = row['HourObj']
                         t_end = t_start + timedelta(hours=1)
                         peak = int(round(row['Adjusted Count']))
                         
-                        # Output format: "07:00-08:00 (Peak: 45)"
-                        time_strings.append(f"{t_start.strftime('%H:%M')} - {t_end.strftime('%H:%M')} (Peak: {peak})")
+                        # Only show if there are actually people (ignore 0 donor hours)
+                        if peak > 0:
+                            time_strings.append(f"{t_start.strftime('%H:%M')} - {t_end.strftime('%H:%M')} (Peak: {peak})")
                     
-                    # Join them with a separator
-                    final_time_str = "  |  ".join(time_strings)
+                    if not time_strings:
+                        final_time_str = "Closed" # Fallback if data existed but all were 0
+                    else:
+                        final_time_str = "  |  ".join(time_strings)
+                        
                     schedule_rows.append({"Day": day, "Power Hours": final_time_str})
                 else:
-                    schedule_rows.append({"Day": day, "Power Hours": "-"})
+                    schedule_rows.append({"Day": day, "Power Hours": "Closed"})
 
-            # Create the table
             df_schedule = pd.DataFrame(schedule_rows)
             st.table(df_schedule.set_index("Day"))
             
-            # Create Copy-Paste Text
+            # Copy Text
             st.subheader("Copy for Email")
             text_output = "Power Hour Schedule:\n"
             for row in schedule_rows:
-                if row['Power Hours'] != "-":
-                    text_output += f"{row['Day']}: {row['Power Hours']}\n"
+                # Don't include "Closed" days in the email copy to keep it short? 
+                # Or include them? Let's include them for clarity.
+                text_output += f"{row['Day']}: {row['Power Hours']}\n"
             st.text_area("Select All & Copy", value=text_output, height=200)
 
         else:
